@@ -122,4 +122,4 @@ class ScanID:
 					c_img.save("out"+str(i)+"_"+id+".jpg")  ## for debugging purposes
 
 # scan the pages of the PDF document for IDs:
-ScanID('mnist_rf.joblib').run('scans.pdf')
+ScanID('mnist_rf.joblib', save_jpgs=True, out_IDs=True).run('scans.pdf')
