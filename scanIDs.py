@@ -8,20 +8,19 @@ import joblib, os
 
 class ScanID:
 
-	out_IDs = True; save_jpgs = False
-
 	def __init__(self, model='mnist_rf_model.joblib', save_jpgs=False, out_IDs=True):
+		self.out_IDs = out_IDs; self.save_jpgs = save_jpgs
+		self.char_map = {0: ' ', 1: '█'}
 		if not os.path.isfile(model):  # Load MNIST data and train RF to detect digits
 			X, y = fetch_openml('mnist_784', version=1, return_X_y=True, as_frame=False)
 			X = (X > 0.5).astype(int)  # Threshold at 0.5 (MNIST pixels are 0-255, normalized to 0-1)
-			self.clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, max_depth=15,)
+			self.clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, max_depth=9,)
 			for s in range(5):
 				self.ascii_pic(X[s].reshape(28, 28)); print(y[s])
 			self.clf.fit(X, y)
 			joblib.dump(self.clf, model)  # save trained odel
 		else:
 			self.clf = joblib.load(model)  # load trained RF model
-		self.char_map = {0: ' ', 1: '█'}
 
 	def ascii_pic(self, arr):  # display 2d binary array as an ascii picture
 		print('\n'.join([''.join([self.char_map[pixel] for pixel in row]) for row in arr]))
@@ -60,6 +59,18 @@ class ScanID:
 		return [ np.max( [max_y - 70, 0] ), max_y+1,
 			np.max([max_x - 10,0]), np.min([max_x + wl + 1,len(img[0])]), img ]
 
+	def match_dspaces_(self, img, dw=50, vs=19):  # search digit spaces of minimally 50 pixels wide
+		vsums = np.sum(img, axis=0)
+		markers = []
+		x = len(vsums)-2;
+		while x > 0:
+			if vsums[x]>vs and vsums[x+1]>vs:
+				markers.append(x)
+				if x>dw-1: x = x - dw  # jump decent amount of pixels to the left
+				else: x = 0
+			x = x-1
+		return markers
+
 	def run(self, pdf_file):
 		with pdfplumber.open(pdf_file) as pdf:
 			for i in range(0,len(pdf.pages),1):
@@ -74,31 +85,24 @@ class ScanID:
 				c_img = c_img.crop( (start_left, start_up, start_right, start_dn) )
 				# stage 3: search from right for the digit markers and extract digits:
 				img = img[start_up:start_dn,start_left:start_right]
-				vsums = np.sum(img, axis=0)
-				x = len(vsums)-2;
-				draw = ImageDraw.Draw(c_img)
-				markers = []
-				while x > 0:
-					if vsums[x]>19 and vsums[x+1]>19:
-						markers.append(x)
-						if x>50-1: x = x - 50  # jump decent amount of pixels to the left
-						else: x = 0
-					x = x-1
+				markers = self.match_dspaces_(img)
 				if len(markers) > 1:
-					for m in range(1, len(markers)):
-						draw.rectangle( (markers[m]+2,1, markers[m-1]-2,start_dn-start_up-1) , outline="red", width=1)
+					for m in range(1, len(markers)):  # draw markers over potential digits in image
+						draw = ImageDraw.Draw(c_img)
+						draw.rectangle( (markers[m]+2,1, markers[m-1]-2, start_dn-start_up-1),
+							outline="red", width=1)
 				if len(markers) <= 7: continue
 				# stage 4: identify single digits
 				id = ""  # to build up the ID
 				samples = []  # collect binary bitmap samples to visualize here
 				for m in range(1, 8):
 					sample = (np.array(c_img) < 200).astype(np.uint8)
-					sample = self.crop_(sample[2:-3,markers[m]+3:markers[m-1]-3])  # carve out the digit
-					if len(sample)<60:
+					sample = self.crop_(sample[2:-3,markers[m]+3:markers[m-1]-3])  # carve out digit
+					if len(sample)<60:  # zoom in on bitmap if it is too small:
 						_height, _width = sample.shape
 						scale_factor = 70 / _height
-						target_width = np.min( [int(_width * scale_factor), 70] )
-						sample = resize(sample, (70, target_width), mode='constant', preserve_range=True)
+						_width = np.min( [int(_width * scale_factor), 70] )
+						sample = resize(sample, (70, _width), mode='constant', preserve_range=True)
 					sample = self.centr_(sample)
 					sample = resize(sample, (28, 28), mode='constant', preserve_range=True)
 					sample = (sample > 0.005).astype(int)
@@ -117,6 +121,5 @@ class ScanID:
 					c_img = c_img.crop( (markers[7], 0, markers[0], c_img.height) )
 					c_img.save("out"+str(i)+"_"+id+".jpg")  ## for debugging purposes
 
-
 # scan the pages of the PDF document for IDs:
-ScanID('mnist_rf_model.joblib').run('scans.pdf')
+ScanID('mnist_rf.joblib').run('scans.pdf')
